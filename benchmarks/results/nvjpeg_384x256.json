@@ -1,0 +1,17 @@
+{
+    "cpu_decode_ms": 8.80322,
+    "cpu_threads": 4,
+    "differing_rgb_values": 370586,
+    "gpu_rgb_buffer_bytes": 18874368,
+    "hardware_decoder_engines": 0,
+    "hardware_info_status": 0,
+    "height": 256,
+    "images": 64,
+    "includes_full_export": false,
+    "max_rgb_abs_difference": 3,
+    "mean_rgb_abs_difference": 0.02125957277086046,
+    "metadata_processing_included": false,
+    "nvjpeg_with_download_ms": 34.673860000000005,
+    "startup_ms": 151.6662,
+    "width": 384
+}

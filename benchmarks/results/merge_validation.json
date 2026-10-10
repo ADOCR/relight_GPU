@@ -1,0 +1,83 @@
+{
+  "synthetic": true,
+  "input_images": 512,
+  "checks": [
+    {
+      "basis": "ptm",
+      "planes": 18,
+      "dimensions": [
+        37,
+        13
+      ],
+      "expected_cuda": true,
+      "comparison": {
+        "coefficient_abs_max": 0.4028199999999913,
+        "coefficient_abs_mean": 0.00359581507950129,
+        "encoded_jpg_abs_max": 3.0,
+        "encoded_jpg_abs_mean": 0.045160545160545164,
+        "icc_equal_semantics": true,
+        "icc_equal_bytes": false,
+        "reconstruction_abs_max_0_255": 0.20095735849352536,
+        "reconstruction_abs_mean_0_255": 0.005975211809263984
+      },
+      "gpu_projection_calls": 14
+    },
+    {
+      "basis": "hsh",
+      "planes": 27,
+      "dimensions": [
+        128,
+        96
+      ],
+      "expected_cuda": true,
+      "comparison": {
+        "coefficient_abs_max": 0.8870700000000511,
+        "coefficient_abs_mean": 0.0005247373001658294,
+        "encoded_jpg_abs_max": 6.0,
+        "encoded_jpg_abs_mean": 0.008011429398148149,
+        "icc_equal_semantics": true,
+        "icc_equal_bytes": false,
+        "reconstruction_abs_max_0_255": 0.35390317919279823,
+        "reconstruction_abs_mean_0_255": 0.0014527286037787398
+      },
+      "gpu_projection_calls": 97
+    },
+    {
+      "basis": "rbf",
+      "planes": 9,
+      "dimensions": [
+        37,
+        13
+      ],
+      "expected_cuda": false,
+      "comparison": {
+        "coefficient_abs_max": 0.0,
+        "coefficient_abs_mean": 0.0,
+        "encoded_jpg_abs_max": 0.0,
+        "encoded_jpg_abs_mean": 0.0,
+        "icc_equal_semantics": true,
+        "icc_equal_bytes": false
+      },
+      "gpu_projection_calls": 0
+    },
+    {
+      "basis": "bilinear",
+      "planes": 9,
+      "dimensions": [
+        39,
+        13
+      ],
+      "expected_cuda": false,
+      "comparison": {
+        "coefficient_abs_max": 0.0,
+        "coefficient_abs_mean": 0.0,
+        "encoded_jpg_abs_max": 0.0,
+        "encoded_jpg_abs_mean": 0.0,
+        "icc_equal_semantics": true,
+        "icc_equal_bytes": false
+      },
+      "gpu_projection_calls": 0
+    }
+  ],
+  "accuracy_validation_only": true
+}

@@ -49,6 +49,7 @@ public:
 	std::vector<float> proj;
 	std::vector<float> mean;
 	bool useEigen = false;
+    bool channelSeparated = false; // exact RGB block structure of PTM/HSH
 	Eigen::JacobiSVD<Eigen::MatrixXf> svd;
 };
 

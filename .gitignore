@@ -99,3 +99,19 @@ __pycache__/
 *.swp
 *.swo
 *~
+# Local planning and private data are excluded from the shareable repository.
+/planning/
+/tools/
+/local/
+/runtime/
+/dist/
+/benchmarks/data/private/
+*.MOV
+*.mov
+*.HEIC
+*.heic
+*.pdb
+*.obj
+
+/benchmarks/data/
+/benchmarks/outputs/

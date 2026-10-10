@@ -1,0 +1,15 @@
+{
+  "base_upstream_commit": "d65e6f2c367bedb4716366a510f4cd7d9f7f48c1",
+  "application_sha256": "c0ddba8816db80b5310cf3c28eadbedae0d3a707695a6ccd89deffb7008e8296",
+  "automated_tests_passed": 6,
+  "cpu_fallback_tested": true,
+  "gpu_rgb_projection_tested": true,
+  "fp64_fft_tested": true,
+  "surface_final_float_height_arrays_identical": true,
+  "package_ptm_hsh_verified": true,
+  "icc_transform_preserved": true,
+  "cuda_hard_dll_imports": false,
+  "gui_start_verified": true,
+  "private_photos_in_public_benchmarks": false,
+  "published_to_github": false
+}

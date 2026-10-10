@@ -1,0 +1,207 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index d27c7f9..7dfdd72 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -99,7 +99,9 @@ if(NOT DISABLE_GPL)
+     find_package(exiv2 CONFIG QUIET NAMES exiv2 Exiv2)
+ 
+     # 2. Map targets based on what succeeded
+-    if(TARGET exiv2::exiv2)
++    if(TARGET Exiv2::exiv2lib)
++    set(EXIV2_FOUND_TARGET Exiv2::exiv2lib)
++elseif(TARGET exiv2::exiv2)
+         set(EXIV2_FOUND_TARGET exiv2::exiv2)
+     elseif(TARGET Exiv2::exiv2)
+         set(EXIV2_FOUND_TARGET Exiv2::exiv2)
+diff --git a/relightlab/mainwindow.cpp b/relightlab/mainwindow.cpp
+index 35ac9ec..f4f8689 100644
+--- a/relightlab/mainwindow.cpp
++++ b/relightlab/mainwindow.cpp
+@@ -32,7 +32,7 @@
+ using namespace std;
+ 
+ MainWindow::MainWindow() {
+-	setWindowTitle("RelightLab");
++	setWindowTitle("RelightLab - JPG completos");
+ 
+ 	createMenu();
+ 
+diff --git a/src/imageset.cpp b/src/imageset.cpp
+index a4a70f6..adcd464 100644
+--- a/src/imageset.cpp
++++ b/src/imageset.cpp
+@@ -211,6 +211,18 @@ void ImageSet::initLights() {
+ bool ImageSet::initImages(const char *_path,  Project::ForcedInputColorspace force_colorspace) {
+ 	int noFilesNeeded = images.size() + 50;
+ #ifdef _WIN32
++	// JPEG mappings do not consume CRT FILE streams. Keep the guard for other formats.
++	noFilesNeeded = 50;
++	QDir inputDir(QString::fromUtf8(_path));
++	for (const QString &image : images) {
++		const QByteArray filename = inputDir.filePath(image).toUtf8();
++		if (ImageDecoder::detectFormat(filename.constData()) != ImageFormat::JPEG)
++			++noFilesNeeded;
++	}
++	// Raise the CRT stream limit for large RTI image sets on Windows.
++	if (_getmaxstdio() < noFilesNeeded && _setmaxstdio(8192) == -1) {
++		throw QString("Could not increase the Windows open-file limit to 8192.");
++	}
+ 	int maxfiles = _getmaxstdio();
+ 	if(maxfiles < noFilesNeeded) {
+ 		throw QString("The max number of files that can be opened is: %1.\nIt depends on system security configurations.\nContact us to work on this problem.").arg(maxfiles);
+@@ -696,4 +708,3 @@ void ImageSet::skipToTop() {
+ 	current_line += top;
+ }
+ 
+-
+diff --git a/src/jpeg_decoder.cpp b/src/jpeg_decoder.cpp
+index dc786ad..fc3dff7 100644
+--- a/src/jpeg_decoder.cpp
++++ b/src/jpeg_decoder.cpp
+@@ -1,5 +1,6 @@
+ #include "jpeg_decoder.h"
+ #include <cstring>
++#include <limits>
+ 
+ JpegDecoder::JpegDecoder() {
+ 	decInfo.err = jpeg_std_error(&errMgr);
+@@ -7,9 +8,13 @@ JpegDecoder::JpegDecoder() {
+ }
+ 
+ JpegDecoder::~JpegDecoder() {
++	jpeg_destroy_decompress(&decInfo);
++#ifdef _WIN32
++	if (mapped_data)
++		mapped_file.unmap(mapped_data);
++#endif
+ 	if(file)
+ 		fclose(file);
+-	jpeg_destroy_decompress(&decInfo);
+ }
+ 
+ void JpegDecoder::setColorSpace(J_COLOR_SPACE colorSpace) {
+@@ -71,9 +76,31 @@ bool JpegDecoder::decode(uint8_t*& img, int& width, int& height) {
+ }
+ 
+ bool JpegDecoder::init(const char* path, int &width, int &height) {
++#ifdef _WIN32
++	jpeg_abort_decompress(&decInfo);
++	if (mapped_data) {
++		mapped_file.unmap(mapped_data);
++		mapped_data = nullptr;
++	}
++	mapped_file.close();
++	mapped_file.setFileName(QString::fromUtf8(path));
++	if (!mapped_file.open(QIODevice::ReadOnly)) return false;
++	mapped_size = mapped_file.size();
++	if (mapped_size <= 0 || quint64(mapped_size) > std::numeric_limits<unsigned long>::max()) {
++		mapped_file.close();
++		return false;
++	}
++	mapped_data = mapped_file.map(0, mapped_size);
++	if (!mapped_data) {
++		mapped_file.close();
++		return false;
++	}
++	jpeg_mem_src(&decInfo, mapped_data, static_cast<unsigned long>(mapped_size));
++#else
+ 	file = fopen(path, "rb");
+ 	if(!file) return false;
+ 	jpeg_stdio_src(&decInfo, file);
++#endif
+ 	return init(width, height);
+ }
+ 
+@@ -162,16 +189,36 @@ size_t JpegDecoder::readRows(int nrows, uint8_t *buffer) { //return false on end
+ }
+ 
+ bool JpegDecoder::finish() {
+-	if(file)
++	// readRows already finishes complete images; abort also safely ends partial reads.
++	jpeg_abort_decompress(&decInfo);
++	if(file) {
+ 		fclose(file);
+-	return jpeg_finish_decompress(&decInfo);
++		file = nullptr;
++	}
++#ifdef _WIN32
++	if (mapped_data) {
++		mapped_file.unmap(mapped_data);
++		mapped_data = nullptr;
++	}
++	mapped_file.close();
++	mapped_size = 0;
++#endif
++	return true;
+ }
+ 
+ bool JpegDecoder::restart() {
+ 	//jpeg_finish_decompress(&decInfo);
+ 	jpeg_abort_decompress(&decInfo);
++#ifdef _WIN32
++	if (mapped_data) {
++		jpeg_mem_src(&decInfo, mapped_data, static_cast<unsigned long>(mapped_size));
++	} else
++#endif
++	{
++	if (!file) return false;
+ 	rewind(file);
+ 	jpeg_stdio_src(&decInfo, file);
++	}
+ 	int w, h;
+ 	return init(w, h);
+ }
+diff --git a/src/jpeg_decoder.h b/src/jpeg_decoder.h
+index 2132d81..83f3ba2 100644
+--- a/src/jpeg_decoder.h
++++ b/src/jpeg_decoder.h
+@@ -5,6 +5,9 @@
+ #include <cstdio>
+ #include <cstdint>
+ #include <vector>
++#ifdef _WIN32
++#include <QFile>
++#endif
+ 
+ #include <jpeglib.h>
+ 
+@@ -43,6 +46,12 @@ public:
+ 
+ private:
+ 	FILE *file = nullptr;
++#ifdef _WIN32
++	// Read-only mappings use native Windows handles instead of CRT FILE streams.
++	QFile mapped_file;
++	uchar *mapped_data = nullptr;
++	qint64 mapped_size = 0;
++#endif
+ 	bool init(int &width, int &height);
+ 	bool decode(uint8_t*& img, int& width, int& height);
+ 	void extractICCProfile();
+diff --git a/src/lens.cpp b/src/lens.cpp
+index d3e9f68..0d629d5 100644
+--- a/src/lens.cpp
++++ b/src/lens.cpp
+@@ -175,5 +175,9 @@ void Lens::readExif(Exif &exif) {
+ 		pixelSizeY = pixelSizeX = 36.0 / (double)width;
+ #endif
+ 	}
++	// Use the explicitly recorded 35mm-equivalent focal length when available.
++	const double recordedEquivalent = exif.getValue("Exif.Photo.FocalLengthIn35mmFilm", 0.0).toDouble();
++	if (recordedEquivalent > 0.0)
++		focalLength = recordedEquivalent;
+ }
+ #undef USING_DIAGONAL
+diff --git a/src/lp.cpp b/src/lp.cpp
+index 2864501..e0d46ea 100644
+--- a/src/lp.cpp
++++ b/src/lp.cpp
+@@ -16,7 +16,7 @@ void parseLP(QString sphere_path, std::vector<Vector3f> &lights, std::vector<QSt
+ 	bool ok;
+ 	int n = stream.readLine().toInt(&ok);
+ 
+-	if(!ok || n <= 0 || n > 1000)
++	if(!ok || n <= 0)
+ 		throw QString("Invalid format or number of lights in .lp.");
+ 
+ 	for(int i = 0; i < n; i++) {

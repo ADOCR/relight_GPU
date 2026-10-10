@@ -32,7 +32,7 @@
 using namespace std;
 
 MainWindow::MainWindow() {
-	setWindowTitle("RelightLab");
+	setWindowTitle("RelightLab - GPU");
 
 	createMenu();
 

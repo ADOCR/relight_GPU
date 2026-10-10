@@ -11,6 +11,8 @@
 #include <Eigen/Core>
 
 #include <functional>
+#include <atomic>
+#include "../compute/gpu_projection.h"
 class QDir;
 class Dome;
 
@@ -37,6 +39,11 @@ public:
 	bool savemedians = false;
 	int crop[4] = { 0, 0, 0, 0 }; //left, top, width, height
 	size_t nworkers = 0; //autodetect optimal number
+    std::string computeBackend = "auto"; // auto, cpu, cuda
+    std::atomic<unsigned long long> gpuProjectionNs{0}, gpuProjectionCalls{0}, cpuProjectionNs{0};
+    bool profiling = false;
+    double loadingMs = 0, samplingMs = 0, baseMs = 0;
+    std::atomic<bool> gpuReported{false}, gpuFallbackReported{false};
 	ColorProfileMode colorProfileMode = COLOR_PROFILE_LINEAR_RGB;
 
 	std::function<bool(QString stage, int percent)> *callback = nullptr;
@@ -54,11 +61,14 @@ public:
 
 	void processLine(PixelArray &sample, PixelArray &resample, std::vector<std::vector<uint8_t>> &line,
 					 std::vector<uchar> &normal, std::vector<uchar> &mean, std::vector<uchar> &median,
-					 cmsHTRANSFORM output_color_transform_float = nullptr);
+					 cmsHTRANSFORM output_color_transform_float = nullptr,
+                         relight::GpuProjection *gpuProjection = nullptr);
 
 protected:
 	MaterialBuilder materialbuilder;
-	std::vector<float> projT; //materialbuilder.proj transposed (dim x nplanes), RBF and bilinear
+    bool projectGpu(PixelArray &pixels, relight::GpuProjection &projection,
+                    std::vector<float> &coefficients);
+	std::vector<float> projT; // materialbuilder.proj transposed, RBF and bilinear
 
 	//for each resample pos get coeffs from the origina lights.
 	Resamplemap resamplemap;

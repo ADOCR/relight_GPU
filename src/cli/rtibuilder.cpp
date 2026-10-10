@@ -6,6 +6,7 @@
 #include "../src/icc_profiles.h"
 #include "../src/eigenpca.h"
 #include "../src/pixel.h"
+#include "../compute/channel_projection.h"
 
 #include <QDir>
 #include <QFile>
@@ -19,6 +20,7 @@
 #include <QtConcurrent/QtConcurrent>
 #include <QFuture>
 #include <QRegularExpression>
+#include <QElapsedTimer>
 
 #include <Eigen/Core>
 
@@ -71,10 +73,26 @@ static Vector3f fromOcta(int x, int y, int resolution) {
 	n = n/float(n.norm());
 	return n;
 }
-RtiBuilder::RtiBuilder() {}
-RtiBuilder::~RtiBuilder() {}
+RtiBuilder::RtiBuilder() {
+    profiling = qEnvironmentVariableIntValue("RELIGHT_PROFILE") != 0;
+    const QString requested = qEnvironmentVariable("RELIGHT_COMPUTE_BACKEND").toLower();
+    if (requested == "cpu" || requested == "auto" || requested == "cuda")
+        computeBackend = requested.toStdString();
+}
+RtiBuilder::~RtiBuilder() {
+    if (profiling) {
+        const QJsonObject result{{"load_setup_ms", loadingMs}, {"sampling_ms", samplingMs},
+            {"base_and_quantization_ms", baseMs},
+            {"cpu_projection_thread_ms_sum", double(cpuProjectionNs.load())/1000000.0},
+            {"gpu_projection_call_ms_sum", double(gpuProjectionNs.load())/1000000.0},
+            {"gpu_projection_calls", double(gpuProjectionCalls.load())},
+            {"requested_backend", QString::fromStdString(computeBackend)}};
+        std::cout << "[profile] " << QJsonDocument(result).toJson(QJsonDocument::Compact).constData() << "\n";
+    }
+}
 
 bool RtiBuilder::setupFromFolder(const string &folder, Dome &dome) {
+    QElapsedTimer phase; phase.start();
 	
 	try {
 		QDir dir(folder.c_str());
@@ -100,11 +118,13 @@ bool RtiBuilder::setupFromFolder(const string &folder, Dome &dome) {
 
 	width = imageset.width;
 	height = imageset.height;
+    loadingMs = phase.nsecsElapsed()/1000000.0;
 	return true;
 }
 
 
 bool RtiBuilder::setupFromProject(const std::string &_filename) {
+    QElapsedTimer phase; phase.start();
 	QString filename (_filename.c_str());
 	try {
 		QFile file(filename);
@@ -129,6 +149,7 @@ bool RtiBuilder::setupFromProject(const std::string &_filename) {
 		error = e.toStdString();
 		return false;
 	}
+    loadingMs = phase.nsecsElapsed()/1000000.0;
 	return true;
 }
 
@@ -203,10 +224,13 @@ bool RtiBuilder::init(std::function<bool(QString stage, int percent)> *_callback
 		//we don't actually need to store the samples, we can just add to (resample) add to PCA, or use to compute material.
 		//collect a set of samples resampled
 		PixelArray resample;
+        QElapsedTimer phase; phase.start();
 		imageset.sample(resample, ndimensions, [&](Pixel &sample, Pixel &resample) { this->resamplePixel(sample, resample); }, samplingram);
 		nsamples = resample.npixels();
-
+        samplingMs = phase.nsecsElapsed()/1000000.0;
+        phase.restart();
 		pickBases(resample);
+        baseMs = phase.nsecsElapsed()/1000000.0;
 	} catch(std::exception &e) {
 		error = "Could not create a base.";
 		return false;
@@ -446,6 +470,7 @@ MaterialBuilder RtiBuilder::pickBasePTM(std::vector<Vector3f> &lights) {
 		} else {
 			std::vector<float> &proj = mat.proj;
 			proj.resize(nplanes*dim, 0.0);
+            mat.channelSeparated = true;
 			for(uint32_t p = 0; p < nplanes; p += 3) {
 				for(uint32_t k = 0; k < lights.size(); k ++) {
 					proj[k*3+0 + (p+0)*dim] = proj[k*3+1 + (p+1)*dim] = proj[k*3+2 + (p+2)*dim] = float(iA(p/3, k));
@@ -490,6 +515,7 @@ MaterialBuilder RtiBuilder::pickBaseHSH(std::vector<Vector3f> &lights, Rti::Type
 	
 	std::vector<float> &proj = mat.proj;
 	proj.resize(nplanes*dim, 0.0);
+    mat.channelSeparated = true;
 	for(uint32_t p = 0; p < nplanes; p += 3) {
 		for(uint32_t k = 0; k < lights.size(); k ++) {
 			proj[k*3+0 + (p+0)*dim] = proj[k*3+1 + (p+1)*dim] = proj[k*3+2 + (p+2)*dim] = iA(p/3, k);
@@ -611,6 +637,43 @@ void RtiBuilder::normalizeHistogram(PixelArray &sample, double percentile) {
 	}
 }
 
+
+bool RtiBuilder::projectGpu(PixelArray &pixels, relight::GpuProjection &projection,
+                           std::vector<float> &coefficients) {
+    if (computeBackend == "cpu" || colorspace != RGB || imageset.light3d
+        || (type != PTM && type != HSH) || materialbuilder.useEigen
+        || pixels.components() != ndimensions) return false;
+    const size_t components = size_t(ndimensions)*3;
+    if (!components || materialbuilder.mean.size() != components
+        || materialbuilder.proj.size() != components*nplanes) return false;
+    // Avoid GPU launch overhead for small projections in automatic mode.
+    if (computeBackend == "auto" && (components < 4096
+        || double(width)*height < 1048576.0
+        || double(pixels.size())*components*nplanes < 4000000.0))
+        return false;
+    QElapsedTimer timer; timer.start();
+    try {
+        std::vector<const float*> pointers;
+        pointers.reserve(pixels.size());
+        for (const auto &pixel : pixels) pointers.push_back(reinterpret_cast<const float*>(pixel.data()));
+        if (projection.configure(materialbuilder.proj.data(), components, nplanes, materialbuilder.channelSeparated)
+            && projection.project(pointers, materialbuilder.mean.data(), coefficients)) {
+            gpuProjectionNs.fetch_add(timer.nsecsElapsed(), std::memory_order_relaxed);
+            gpuProjectionCalls.fetch_add(1, std::memory_order_relaxed);
+            if (!gpuReported.exchange(true))
+                std::cout << "[compute] CUDA strict FP32 enabled; explicit projection buffers <= 32 MiB per worker\n";
+            return true;
+        }
+    } catch (const std::exception &e) {
+        if (!gpuFallbackReported.exchange(true))
+            std::cerr << "[compute] CUDA failed; using CPU: " << e.what() << "\n";
+        return false;
+    }
+    if (!gpuFallbackReported.exchange(true))
+        std::cerr << "[compute] Using CPU: " << projection.diagnostic() << "\n";
+    return false;
+}
+
 void RtiBuilder::minmaxMaterial(PixelArray &sample) {
 	uint32_t dim = sample.components()*3;
 
@@ -645,7 +708,10 @@ void RtiBuilder::minmaxMaterial(PixelArray &sample) {
 	for(uint32_t p = 0; p < nplanes; p++)
 		values[p].resize(sample.npixels());
 
-	// Collect all coefficient values from sampled pixels, in parallel chunks to report progress.
+	relight::GpuProjection projection;
+	std::vector<float> gpuCoefficients;
+	const bool useGpu = computeBackend == "cuda" && projectGpu(sample, projection, gpuCoefficients);
+	// Retain upstream parallel CPU collection and cancellation between chunks.
 	int npixels = int(sample.npixels());
 	int chunk = std::max(1, npixels/50);
 	for(int start = 0; start < npixels; start += chunk) {
@@ -655,7 +721,12 @@ void RtiBuilder::minmaxMaterial(PixelArray &sample) {
 		int end = std::min(npixels, start + chunk);
 		#pragma omp parallel for
 		for(int i = start; i < end; i++) {
-			vector<float> principal = toPrincipal(sample[i]);
+			vector<float> principal;
+			if(useGpu)
+				principal.assign(gpuCoefficients.begin() + size_t(i)*nplanes,
+				                 gpuCoefficients.begin() + size_t(i+1)*nplanes);
+			else
+				principal = toPrincipal(sample[i]);
 			for(uint32_t p = 0; p < nplanes; p++)
 				values[p][i] = principal[p];
 		}
@@ -1011,6 +1082,7 @@ Vector3f RtiBuilder::getNormalThreeLights(vector<float> &pri) {
 class Worker {
 public:
 	RtiBuilder &b;
+    relight::GpuProjection projection;
 	cmsHTRANSFORM output_color_transform_float = nullptr;
 	vector<vector<uint8_t>> line;
 	vector<uchar> normals;
@@ -1034,7 +1106,7 @@ public:
 	}
 
 	void run() {
-		b.processLine(sample, resample, line, normals, means, medians, output_color_transform_float);
+		b.processLine(sample, resample, line, normals, means, medians, output_color_transform_float, &projection);
 	}
 };
 
@@ -1644,7 +1716,7 @@ size_t RtiBuilder::save(const string &output, int quality) {
 
 void RtiBuilder::processLine(PixelArray &sample, PixelArray &resample, std::vector<std::vector<uint8_t>> &line,
 							 std::vector<uchar> &normals, std::vector<uchar> &means, std::vector<uchar> &medians,
-							 cmsHTRANSFORM output_color_transform_float) {
+							 cmsHTRANSFORM output_color_transform_float, relight::GpuProjection *gpuProjection) {
 
 	//resamplePixel only copies the pixel unless bilinear or YCC.
 	bool resampled = type == BILINEAR || colorspace == MYCC;
@@ -1677,16 +1749,19 @@ void RtiBuilder::processLine(PixelArray &sample, PixelArray &resample, std::vect
 	}
 
 
+	PixelArray &input = resampled ? resample : sample;
+	std::vector<float> gpuCoefficients;
+	const bool useGpu = gpuProjection && projectGpu(input, *gpuProjection, gpuCoefficients);
 	bool rbf = (type == RBF || type == BILINEAR) && !materialbuilder.useEigen && projT.size();
 	vector<float> projected;
-	if(rbf) { //project 4 pixels at a time
+	if(rbf) { // Retain upstream four-pixel CPU projection for RBF/bilinear.
 		projected.assign(size_t(width)*nplanes, 0.0f);
 		for(uint32_t x = 0; x < width; x += 4) {
 			int n = std::min(4, int(width - x));
 			Pixel *p[4];
 			float *r[4];
 			for(int j = 0; j < n; j++) {
-				p[j] = resampled ? &resample[x + j] : &sample[x + j];
+				p[j] = &input[x + j];
 				r[j] = projected.data() + size_t(x + j)*nplanes;
 			}
 			projectRbf(p, r, n);
@@ -1694,10 +1769,12 @@ void RtiBuilder::processLine(PixelArray &sample, PixelArray &resample, std::vect
 	}
 	vector<float> pri(nplanes);
 	for(uint32_t x = 0; x < width; x++) {
-		if(rbf)
+		if(useGpu)
+			std::copy_n(gpuCoefficients.data() + size_t(x)*nplanes, nplanes, pri.begin());
+		else if(rbf)
 			std::copy_n(projected.data() + size_t(x)*nplanes, nplanes, pri.begin());
 		else
-			pri = toPrincipal(resampled ? resample[x] : sample[x]);
+			pri = toPrincipal(input[x]);
 
 		if(savemeans) {
 			Vector3f n = extractMean(sample[x]);
@@ -2143,6 +2220,7 @@ std::vector<float> RtiBuilder::toPrincipal(Pixel &pixel) {
 
 
 std::vector<float> RtiBuilder::toPrincipal(Pixel &pixel, MaterialBuilder &materialbuilder) {
+    QElapsedTimer phase; if (profiling) phase.start();
 	float *v = (float *)pixel.data();
 	uint32_t dim = ndimensions*3;
 
@@ -2183,7 +2261,9 @@ std::vector<float> RtiBuilder::toPrincipal(Pixel &pixel, MaterialBuilder &materi
 		
 
 	} else { //RGB, YCC
-		if(!materialbuilder.useEigen && projT.size() && &materialbuilder == &this->materialbuilder) {
+		if(!materialbuilder.useEigen && materialbuilder.channelSeparated && colorspace == RGB) {
+			relight::projectSeparatedRgb(v, materialbuilder.mean.data(), materialbuilder.proj.data(), ndimensions, nplanes, res.data());
+		} else if(!materialbuilder.useEigen && projT.size() && &materialbuilder == &this->materialbuilder) {
 			Pixel *p = &pixel;
 			float *r = res.data();
 			projectRbf(&p, &r, 1);
@@ -2233,6 +2313,6 @@ std::vector<float> RtiBuilder::toPrincipal(Pixel &pixel, MaterialBuilder &materi
 			res[2] = 255.0f * cr/count;
 		}
 	}
+    if (profiling) cpuProjectionNs.fetch_add(phase.nsecsElapsed(), std::memory_order_relaxed);
 	return res;
 }
-

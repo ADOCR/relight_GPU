@@ -1,5 +1,6 @@
 #include "jpeg_decoder.h"
 #include <cstring>
+#include <limits>
 
 JpegDecoder::JpegDecoder() {
 	decInfo.err = jpeg_std_error(&errMgr);
@@ -7,9 +8,13 @@ JpegDecoder::JpegDecoder() {
 }
 
 JpegDecoder::~JpegDecoder() {
+	jpeg_destroy_decompress(&decInfo);
+#ifdef _WIN32
+	if (mapped_data)
+		mapped_file.unmap(mapped_data);
+#endif
 	if(file)
 		fclose(file);
-	jpeg_destroy_decompress(&decInfo);
 }
 
 void JpegDecoder::setColorSpace(J_COLOR_SPACE colorSpace) {
@@ -71,9 +76,31 @@ bool JpegDecoder::decode(uint8_t*& img, int& width, int& height) {
 }
 
 bool JpegDecoder::init(const char* path, int &width, int &height) {
+#ifdef _WIN32
+	jpeg_abort_decompress(&decInfo);
+	if (mapped_data) {
+		mapped_file.unmap(mapped_data);
+		mapped_data = nullptr;
+	}
+	mapped_file.close();
+	mapped_file.setFileName(QString::fromUtf8(path));
+	if (!mapped_file.open(QIODevice::ReadOnly)) return false;
+	mapped_size = mapped_file.size();
+	if (mapped_size <= 0 || quint64(mapped_size) > std::numeric_limits<unsigned long>::max()) {
+		mapped_file.close();
+		return false;
+	}
+	mapped_data = mapped_file.map(0, mapped_size);
+	if (!mapped_data) {
+		mapped_file.close();
+		return false;
+	}
+	jpeg_mem_src(&decInfo, mapped_data, static_cast<unsigned long>(mapped_size));
+#else
 	file = fopen(path, "rb");
 	if(!file) return false;
 	jpeg_stdio_src(&decInfo, file);
+#endif
 	return init(width, height);
 }
 
@@ -162,20 +189,36 @@ size_t JpegDecoder::readRows(int nrows, uint8_t *buffer) { //return false on end
 }
 
 bool JpegDecoder::finish() {
+	// readRows already finishes complete images; abort also safely ends partial reads.
+	jpeg_abort_decompress(&decInfo);
 	if(file) {
 		fclose(file);
 		file = nullptr;
 	}
-	//jpeg_finish_decompress fails if not all rows were read, or if readRows already called it.
-	jpeg_abort_decompress(&decInfo);
+#ifdef _WIN32
+	if (mapped_data) {
+		mapped_file.unmap(mapped_data);
+		mapped_data = nullptr;
+	}
+	mapped_file.close();
+	mapped_size = 0;
+#endif
 	return true;
 }
 
 bool JpegDecoder::restart() {
 	//jpeg_finish_decompress(&decInfo);
 	jpeg_abort_decompress(&decInfo);
+#ifdef _WIN32
+	if (mapped_data) {
+		jpeg_mem_src(&decInfo, mapped_data, static_cast<unsigned long>(mapped_size));
+	} else
+#endif
+	{
+	if (!file) return false;
 	rewind(file);
 	jpeg_stdio_src(&decInfo, file);
+	}
 	int w, h;
 	return init(w, h);
 }

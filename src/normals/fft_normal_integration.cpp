@@ -1,6 +1,7 @@
 #include "fft_normal_integration.h"
 
 #include "pocketfft.h"
+#include "../compute/gpu_fft.h"
 #include <Eigen/Dense>
 
 #include <vector>
@@ -98,8 +99,10 @@ void fft_integrate(std::function<bool(QString s, int n)> progressed,
 	pocketfft::shape_t shape = {size_t(cols), size_t(rows)};
 	pocketfft::stride_t stride = { element_size, ptrdiff_t(cols)*element_size };
 	pocketfft::shape_t axes{0, 1};
-	pocketfft::c2c(shape, stride, stride, axes, pocketfft::FORWARD, dzdx.data(), dzdx.data(), 1.0, 0);
-	pocketfft::c2c(shape, stride, stride, axes, pocketfft::FORWARD, dzdy.data(), dzdy.data(), 1.0, 0);
+	if(!relight::tryGpuFft2D(dzdx.data(), size_t(cols), size_t(rows), false, 1.0))
+		pocketfft::c2c(shape, stride, stride, axes, pocketfft::FORWARD, dzdx.data(), dzdx.data(), 1.0, 0);
+	if(!relight::tryGpuFft2D(dzdy.data(), size_t(cols), size_t(rows), false, 1.0))
+		pocketfft::c2c(shape, stride, stride, axes, pocketfft::FORWARD, dzdy.data(), dzdy.data(), 1.0, 0);
 
 	// Frequency domain integration, result goes in dzdx.
 	std::complex<double> j(0, 1); // Imaginary unit
@@ -115,7 +118,9 @@ void fft_integrate(std::function<bool(QString s, int n)> progressed,
 	dzdy = std::vector<std::complex<double>>();
 
 	// Inverse FFT to reconstruct z
-	pocketfft::c2c(shape, stride, stride, axes, pocketfft::BACKWARD, dzdx.data(), dzdx.data(), 1.0/(4*sqrt(2)* rows * cols), 0);
+	const double normalization = 1.0/(4*sqrt(2)*rows*cols);
+	if(!relight::tryGpuFft2D(dzdx.data(), size_t(cols), size_t(rows), true, normalization))
+		pocketfft::c2c(shape, stride, stride, axes, pocketfft::BACKWARD, dzdx.data(), dzdx.data(), normalization, 0);
 
 	heights.resize(size_t(rows) * cols);
 	for (size_t i = 0; i < heights.size(); ++i)

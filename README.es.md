@@ -1,6 +1,6 @@
 # RelightLab con mejoras CPU y GPU
 
-Versión experimental e independiente basada en RelightLab 2026.09 de CNR-ISTI VCLab. [Documentación técnica en inglés](README.md).
+Versión experimental e independiente basada en RelightLab 2026.09 de CNR-ISTI VCLab, integrada con los cambios de `c9709ddcbd07026e4022c24c5988e5a655b583ed`. [Documentación técnica en inglés](README.md). [Guía original de uso y opciones](README.upstream.md).
 
 ## Qué mejora
 

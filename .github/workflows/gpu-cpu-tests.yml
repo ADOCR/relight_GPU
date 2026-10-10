@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - 'src/compute/**'
+      - 'src/normals/fft_normal_integration.cpp'
       - 'tests/gpu/**'
       - '.github/workflows/gpu-cpu-tests.yml'
 jobs:

@@ -1,6 +1,6 @@
 # RelightLab GPU fork
 
-An experimental, independently built fork of [CNR-ISTI VCLab RelightLab](https://github.com/cnr-isti-vclab/relight), based on **RelightLab 2026.09** (`d65e6f2c367bedb4716366a510f4cd7d9f7f48c1`). [Español](README.es.md).
+An experimental, independently built fork of [CNR-ISTI VCLab RelightLab](https://github.com/cnr-isti-vclab/relight), based on **RelightLab 2026.09** (`d65e6f2c367bedb4716366a510f4cd7d9f7f48c1`), integrated with upstream `c9709ddcbd07026e4022c24c5988e5a655b583ed`. [EspaÃ±ol](README.es.md).
 
 The fork preserves the upstream CPU paths, all input images and their original resolution. It does not replace calibrated light directions, alignment or image-quality review.
 
@@ -15,6 +15,8 @@ The fork preserves the upstream CPU paths, all input images and their original r
 - Stage profiling, reproducible synthetic fixtures, accuracy tests and published measurements.
 
 ## Use
+
+See the [upstream usage guide](README.upstream.md) for the complete CLI and format documentation.
 
 In **File > Preferences > Performances**, select Automatic, CPU or NVIDIA GPU for PTM/HSH processing. The application has a separate settings namespace, `RelightLab GPU`, so it does not overwrite the normal installation's preferences.
 

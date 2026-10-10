@@ -4,6 +4,8 @@ Test system: NVIDIA GeForce RTX 3070 (8 GiB), AMD Ryzen 5 4600G (6 cores / 12 th
 
 ## Results
 
+The timing table below was measured on the original 2026.09-based fork, **before** integrating upstream commit `c9709ddcbd07026e4022c24c5988e5a655b583ed`. That integration adds parallel image reading, float color transforms, parallel quantiles/encoding and a streamlined multi-threaded CPU surface implementation. These historical speed ratios must not be presented as measurements of the integrated version. Integration validation checks correctness; new performance claims require fresh end-to-end benchmarks on an idle machine.
+
 | Measurement | CPU | GPU | Interpretation |
 |---|---:|---:|---|
 | Dense projection: 9,414 components, 18 planes, 1,024 pixels | 142.993 ms | 18.816 ms | GPU time includes host/device transfers; excludes image loading and writing. This reference predates the exact CPU channel optimization. |
@@ -30,3 +32,13 @@ The complete-export runner alternates CPU/GPU order and records every wall-clock
 Use `benchmarks/generate_fixture.py` and `benchmarks/run_export_benchmark.py`. Results are in `benchmarks/results/`; generated input and output directories are excluded from Git. Use `tests/gpu` for projection, CPU fallback, RGB matrix validation, memory limits, FFT precision and surface consistency.
 
 Set `RELIGHT_REQUIRE_CUDA=1` when testing on a GPU host so unavailable CUDA is a failure. On CPU-only CI, CUDA tests are skipped with return code 77, and CPU fallback / exact CPU tests still run. `nvjpeg_benchmark` is an optional diagnostic tool and does not change the application's JPEG reader.
+
+## Validation after upstream integration
+
+The integrated Windows application compiled successfully and all six CPU/CUDA tests passed with `RELIGHT_REQUIRE_CUDA=1` on the RTX 3070. `tests/integration/verify_export_merge.py` additionally validates eight complete exports from 512 synthetic input images: PTM/HSH with actual CUDA calls, and RBF/bilinear with the CPU fallback and different worker counts. It checks image dimensions, coefficient planes, all 512 light directions, finite materials and matching ICC transforms. PTM exercises `-H` and an offset crop; odd crop widths exercise partial four-pixel RBF batches.
+
+The maximum reconstructed CPU/CUDA difference was 0.201/255 for cropped PTM and 0.354/255 for HSH. RBF and bilinear coefficient images were identical between one and two row workers. See `benchmarks/results/merge_validation.json`. These checks establish numerical consistency on the synthetic fixture, not a new speedup or validation of real calibrated geometry.
+
+```text
+python tests/integration/verify_export_merge.py RELIGHT_CLI SYNTHETIC_FIXTURE NEW_OUTPUT_DIRECTORY
+```

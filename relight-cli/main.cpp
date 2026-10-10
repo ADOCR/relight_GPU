@@ -120,7 +120,7 @@ int main(int argc, char *argv[]) {
 
 	opterr = 0;
 	char c;
-	while ((c  = getopt (argc, argv, "hmMn3:r:d:q:p:s:c:reE:b:y:S:R:CD:Q:L:k:P:I:vg:w:")) != -1)
+	while ((c  = getopt (argc, argv, "hmMn3:r:d:q:p:s:c:reE:b:y:S:R:CD:Q:L:k:P:I:vg:w:H")) != -1)
 		switch (c)
 		{
 		case 'g': {

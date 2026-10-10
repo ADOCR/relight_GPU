@@ -350,7 +350,7 @@ QImage ImageSet::maxImage(std::function<bool(std::string stage, int percent)> *c
 	QImage image(w, h, QImage::Format::Format_RGB888);
 	image.fill(0);
 	
-	uint8_t *row = new uint8_t[w*3];
+	std::vector<float> row(size_t(w)*3);
 	
 	restart();
 	for(int y = 0; y < image_height; y++) {
@@ -362,25 +362,29 @@ QImage ImageSet::maxImage(std::function<bool(std::string stage, int percent)> *c
 		uint8_t *rowmax = image.scanLine(y);
 		for(uint32_t i = 0; i < decoders.size(); i++) {
 			ImageDecoder *dec = decoders[i];
-			dec->readRows(1, row);
-			applyColorTransform(row, w);
+			dec->readRows(1, row.data());
+			applyColorTransform(row.data(), w);
 			
 			for(int x = 0; x < image_width; x++) {
-				rowmax[x*3 + 0] = std::max(rowmax[x*3 + 0], row[x*3 + 0]);
-				rowmax[x*3 + 1] = std::max(rowmax[x*3 + 1], row[x*3 + 1]);
-				rowmax[x*3 + 2] = std::max(rowmax[x*3 + 2], row[x*3 + 2]);
+				for(int c = 0; c < 3; c++) {
+					uint8_t value = uint8_t(std::min(std::max(row[x*3 + c], 0.0f), 1.0f) * 255.0f + 0.5f);
+					rowmax[x*3 + c] = std::max(rowmax[x*3 + c], value);
+				}
 			}
 		}
 	}
-	delete []row;
 	return image;
 }
 
 void ImageSet::decode(size_t img, unsigned char *buffer) {
 	//TODO FIX for crop!;
 	assert(width == image_width && height == image_height);
-	decoders[img]->readRows(height, buffer);
-	applyColorTransform(buffer, size_t(width)*size_t(height));
+	size_t samples = size_t(width)*size_t(height)*3;
+	std::vector<float> decoded(samples);
+	decoders[img]->readRows(height, decoded.data());
+	applyColorTransform(decoded.data(), size_t(width)*size_t(height));
+	for(size_t i = 0; i < samples; i++)
+		buffer[i] = uint8_t(std::min(std::max(decoded[i], 0.0f), 1.0f) * 255.0f + 0.5f);
 }
 
 
@@ -408,7 +412,9 @@ void ImageSet::compensateVignetting(PixelArray &pixels) {
         return;
 	if(!lens.focalLength) //this should not really happens.
 		return;
-	for(Pixel &pixel: pixels) {
+	#pragma omp parallel for
+	for(int x = 0; x < int(pixels.size()); x++) {
+		Pixel &pixel = pixels[x];
 		float angle = lens.viewAngle(pixel.x, pixel.y);
 		float f = 1/pow(cos(angle), 4);
 		for(size_t i = 0; i < pixel.size(); i++) {
@@ -425,7 +431,9 @@ void ImageSet::compensateIntensity(PixelArray &pixels) {
 	assert(pixel_size != 0.0f);
 	assert(lights1.size() == size_t(images.size()));
 	assert(lights1.size() == pixels.nlights);
-	for(Pixel &pixel: pixels) {
+	#pragma omp parallel for
+	for(int x = 0; x < int(pixels.size()); x++) {
+		Pixel &pixel = pixels[x];
 		for(size_t i = 0; i < pixel.size(); i++) {
 			Vector3f l = relativeLight(lights1[i], pixel.x, pixel.y);
 			float f = l.squaredNorm() / idealLightDistance2;
@@ -446,20 +454,17 @@ void ImageSet::readLine(PixelArray &pixels) {
 		pixel.y = image_height - 1 - current_line;
 	}
 
-	//TODO: no need to allocate EVERY time.
-	rowBuffer.resize(size_t(image_width)*3);
-    auto &row = rowBuffer;
+	readRows(true);
 
-	for(size_t i = 0; i < decoders.size(); i++) {
-		decoders[i]->readRows(1, row.data());
-
-		int x_offset = offsets.size() ? offsets[i].x() : 0;
-		applyColorTransform(row.data() + (left + x_offset)*3, width);
-
-		for(int x = left; x < right; x++) {
-			pixels[x - left][i].r = row[(x + x_offset)*3 + 0];
-			pixels[x - left][i].g = row[(x + x_offset)*3 + 1];
-			pixels[x - left][i].b = row[(x + x_offset)*3 + 2];
+	//copy per pixel: threads writing the same pixel would share cache lines.
+	int n = int(decoders.size());
+	#pragma omp parallel for
+	for(int x = left; x < right; x++) {
+		Pixel &pixel = pixels[x - left];
+		for(int i = 0; i < n; i++) {
+			int x_offset = offsets.size() ? offsets[i].x() : 0;
+			const float *c = row_buffers[i].data() + (x + x_offset)*3;
+			pixel[i] = Color3f(c[0]*255.0f, c[1]*255.0f, c[2]*255.0f);
 		}
 	}
 	compensateVignetting(pixels);
@@ -501,7 +506,6 @@ uint32_t ImageSet::sample(PixelArray &resample, uint32_t ndimensions, std::funct
 	PixelArray sample(samplexrow, images.size());
 
 	uint32_t offset = 0;
-	vector<uint8_t> row(image_width*3);
 	for(int y = top; y < bottom; y++) {
 		if(callback && !(*callback)("Sampling images:", 100*(y-top)/(height-1)))
 			throw std::string("Cancelled");
@@ -509,28 +513,18 @@ uint32_t ImageSet::sample(PixelArray &resample, uint32_t ndimensions, std::funct
 		//read one row per image at a time
 		auto &selection = sampler.result(samplexrow, width);
 
-		for(uint32_t i = 0; i < decoders.size(); i++) {
-			ImageDecoder *dec = decoders[i];
-			dec->readRows(1, row.data());
+		readRows(false);
 
-			applyColorTransform(row.data() + left*3, width);
-			uint32_t x = 0;
-			for(int k: selection) {
-				Color3f &pixel = sample[x][i];
-
-				pixel.r = row[(k+left)*3 + 0];
-				pixel.g = row[(k+left)*3 + 1];
-				pixel.b = row[(k+left)*3 + 2];
-
-				x++;
-			}
-		}
-		{
-			uint32_t x = 0;
-			for(int k: selection) {
-				sample[x].x = k + left;
-				sample[x].y = image_height - 1 - y;
-				x++;
+		vector<int> columns(selection.begin(), selection.end());
+		int n = int(decoders.size());
+		#pragma omp parallel for
+		for(int x = 0; x < int(columns.size()); x++) {
+			Pixel &pixel = sample[x];
+			pixel.x = columns[x] + left;
+			pixel.y = image_height - 1 - y;
+			for(int i = 0; i < n; i++) {
+				const float *c = row_buffers[i].data() + (columns[x] + left)*3;
+				pixel[i] = Color3f(c[0]*255.0f, c[1]*255.0f, c[2]*255.0f);
 			}
 		}
 		compensateVignetting(sample);
@@ -572,10 +566,10 @@ void ImageSet::createColorTransform() {
 		if(src.empty()) src = "embedded ICC";
 	}
 	std::cout << "Color transform: " << src << " -> " << modeNames[color_profile_mode] << std::endl;
-	color_transform = ColorProfile::createColorTransform(icc_profile_data, color_profile_mode);
+	color_transform = ColorProfile::createColorTransform(icc_profile_data, color_profile_mode, TYPE_RGB_FLT);
 }
 
-void ImageSet::applyColorTransform(uint8_t *data, size_t pixel_count) {
+void ImageSet::applyColorTransform(float *data, size_t pixel_count) {
 	if(color_transform)
 		cmsDoTransform(color_transform, data, data, pixel_count);
 }
@@ -695,17 +689,35 @@ void ImageSet::rotateLights(float a) {
 	}
 }
 
-void ImageSet::skipToTop() {
-	std::vector<uint8_t> row(image_width*3);
+//read the next row of every image (in parallel) into row_buffers and apply the color transform to the crop.
+void ImageSet::readRows(bool aligned) {
+	row_buffers.resize(decoders.size());
+	#pragma omp parallel for schedule(dynamic)
+	for(int i = 0; i < int(decoders.size()); i++) {
+		std::vector<float> &row = row_buffers[i];
+		row.resize(size_t(image_width)*3);
+		decoders[i]->readRows(1, row.data());
 
-	for(uint32_t i = 0; i < decoders.size(); i++) {
-		int y_offset = offsets.size() ? offsets[i].y() : 0;
-		for(int y = 0; y < top + y_offset; y++)
-			decoders[i]->readRows(1, row.data());
-		
-		if(callback && !(*callback)("Skipping cropped lines...", 100*i/(decoders.size()-1)))
+		int x_offset = (aligned && offsets.size()) ? offsets[i].x() : 0;
+		applyColorTransform(row.data() + (left + x_offset)*3, width);
+	}
+}
+
+void ImageSet::skipToTop() {
+	//batches of images are skipped in parallel, the callback is called between batches.
+	const int batch = 8;
+	int n = int(decoders.size());
+	for(int start = 0; start < n; start += batch) {
+		int end = std::min(n, start + batch);
+		#pragma omp parallel for
+		for(int i = start; i < end; i++) {
+			std::vector<float> row(size_t(image_width)*3);
+			int y_offset = offsets.size() ? offsets[i].y() : 0;
+			for(int y = 0; y < top + y_offset; y++)
+				decoders[i]->readRows(1, row.data());
+		}
+		if(callback && !(*callback)("Skipping cropped lines...", 100*end/n))
 			throw std::string("Cancelled");
 	}
 	current_line += top;
 }
-

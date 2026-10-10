@@ -151,14 +151,15 @@ public:
 protected:
 	std::function<bool(QString stage, int percent)> *callback;
 	std::vector<ImageDecoder *> decoders;
+	std::vector<std::vector<float>> row_buffers; //one row per image, filled by readRows()
 
 
 private:
-    std::vector<uint8_t> rowBuffer; // reused by the sequential image reader
+	void readRows(bool aligned);
 	void compensateVignetting(PixelArray &pixels);
 
 	void compensateIntensity(PixelArray &pixels);
-	void applyColorTransform(uint8_t *data, size_t pixel_count);
+	void applyColorTransform(float *data, size_t pixel_count);
 };
 
 #endif // IMAGESET_H

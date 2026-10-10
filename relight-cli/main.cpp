@@ -7,6 +7,7 @@
 extern int opterr;
 
 #include <QDir>
+#include <QCoreApplication>
 #include <QImage>
 #include <QElapsedTimer>
 
@@ -39,7 +40,8 @@ void help() {
 	cout << "\t  -m        : extract mean image\n";
 	cout << "\t  -M        : extract median image (7/8th quantile) \n";
 
-	cout << "\t  -w        : number of workers (default 8)\n";
+	cout << "\t  -w        : number of workers (1..64; default: automatic)\n";
+    cout << "\t  -g <auto|cpu|cuda>: PTM/HSH compute backend, with safe CPU fallback\n";
 	cout << "\t  -k <int>x<int>+<int>+<int>: Cropping extracts only the widthxheight+offx+offy part\n";
 
 	cout << "\nIgnore exotic parameters below here\n\n";
@@ -97,6 +99,7 @@ bool progress(QString str, int n) {
 }
 
 int main(int argc, char *argv[]) {
+    QCoreApplication app(argc, argv);
 	Rti rti1;
 	rti1.lightWeightsSh(0.3, 0.2);
 	if(argc == 1) {
@@ -117,10 +120,22 @@ int main(int argc, char *argv[]) {
 
 	opterr = 0;
 	char c;
-	while ((c  = getopt (argc, argv, "hmMn3:r:d:q:p:s:c:reE:b:y:S:R:CD:Q:L:k:P:I:v")) != -1)
+	while ((c  = getopt (argc, argv, "hmMn3:r:d:q:p:s:c:reE:b:y:S:R:CD:Q:L:k:P:I:vg:w:")) != -1)
 		switch (c)
 		{
-		case 'h':
+		case 'g': {
+            const std::string backend = optarg;
+            if (backend != "auto" && backend != "cpu" && backend != "cuda") {
+                std::cerr << "Invalid compute backend (-g): " << backend << "\n"; return 1;
+            }
+            builder.computeBackend = backend; break;
+        }
+        case 'w': {
+            const int count = atoi(optarg);
+            if (count < 1 || count > 64) { std::cerr << "Worker count must be 1..64\n"; return 1; }
+            builder.nworkers = size_t(count); break;
+        }
+        case 'h':
 			help();
 			break;
 		case 'n':
@@ -228,9 +243,6 @@ int main(int argc, char *argv[]) {
 				dome.verticalOffset = params.split(':')[1].toDouble();
 			}
 		}
-			break;
-		case 'w':
-			builder.nworkers = std::min(atoi(optarg), 1);
 			break;
 		case 'e':
 			evaluate_error = true;

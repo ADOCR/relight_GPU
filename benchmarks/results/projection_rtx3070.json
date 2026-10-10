@@ -1,0 +1,14 @@
+{
+    "batch_capacity": 871,
+    "components": 9414,
+    "cpu_ms": 142.99318,
+    "device_bytes": 33538896,
+    "gpu_with_transfers_ms": 18.81616,
+    "includes_full_export": false,
+    "max_abs_error_vs_fp32": 8.702278137207031e-06,
+    "max_abs_error_vs_fp64": 9.030095144968442e-07,
+    "pixels": 1024,
+    "planes": 18,
+    "repeats": 5,
+    "startup_ms": 249.0319
+}

@@ -34,6 +34,8 @@ void RtiTask::setProject(Project &project) {
 	builder->imageset.pixel_size = project.pixelSize();
 
 	builder->nworkers = qRelightApp->nThreads();
+    if (qEnvironmentVariable("RELIGHT_COMPUTE_BACKEND").isEmpty())
+        builder->computeBackend = QSettings().value("ComputeBackend", "auto").toString().toStdString();
 	builder->samplingram = qRelightApp->samplingRam();
 
 	parameters.crop = project.crop;

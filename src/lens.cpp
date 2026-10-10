@@ -175,5 +175,9 @@ void Lens::readExif(Exif &exif) {
 		pixelSizeY = pixelSizeX = 36.0 / (double)width;
 #endif
 	}
+	// Use the explicitly recorded 35mm-equivalent focal length when available.
+	const double recordedEquivalent = exif.getValue("Exif.Photo.FocalLengthIn35mmFilm", 0.0).toDouble();
+	if (recordedEquivalent > 0.0)
+		focalLength = recordedEquivalent;
 }
 #undef USING_DIAGONAL

@@ -5,6 +5,9 @@
 #include <cstdio>
 #include <cstdint>
 #include <vector>
+#ifdef _WIN32
+#include <QFile>
+#endif
 
 #include <jpeglib.h>
 
@@ -43,6 +46,12 @@ public:
 
 private:
 	FILE *file = nullptr;
+#ifdef _WIN32
+	// Read-only mappings use native Windows handles instead of CRT FILE streams.
+	QFile mapped_file;
+	uchar *mapped_data = nullptr;
+	qint64 mapped_size = 0;
+#endif
 	bool init(int &width, int &height);
 	bool decode(uint8_t*& img, int& width, int& height);
 	void extractICCProfile();

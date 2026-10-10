@@ -211,6 +211,18 @@ void ImageSet::initLights() {
 bool ImageSet::initImages(const char *_path,  Project::ForcedInputColorspace force_colorspace) {
 	int noFilesNeeded = images.size() + 50;
 #ifdef _WIN32
+	// JPEG mappings do not consume CRT FILE streams. Keep the guard for other formats.
+	noFilesNeeded = 50;
+	QDir inputDir(QString::fromUtf8(_path));
+	for (const QString &image : images) {
+		const QByteArray filename = inputDir.filePath(image).toUtf8();
+		if (ImageDecoder::detectFormat(filename.constData()) != ImageFormat::JPEG)
+			++noFilesNeeded;
+	}
+	// Raise the CRT stream limit for large RTI image sets on Windows.
+	if (_getmaxstdio() < noFilesNeeded && _setmaxstdio(8192) == -1) {
+		throw QString("Could not increase the Windows open-file limit to 8192.");
+	}
 	int maxfiles = _getmaxstdio();
 	if(maxfiles < noFilesNeeded) {
 		throw QString("The max number of files that can be opened is: %1.\nIt depends on system security configurations.\nContact us to work on this problem.").arg(maxfiles);
@@ -435,7 +447,8 @@ void ImageSet::readLine(PixelArray &pixels) {
 	}
 
 	//TODO: no need to allocate EVERY time.
-	std::vector<uint8_t> row(image_width*3);
+	rowBuffer.resize(size_t(image_width)*3);
+    auto &row = rowBuffer;
 
 	for(size_t i = 0; i < decoders.size(); i++) {
 		decoders[i]->readRows(1, row.data());
@@ -695,5 +708,4 @@ void ImageSet::skipToTop() {
 	}
 	current_line += top;
 }
-
 

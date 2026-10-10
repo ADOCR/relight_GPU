@@ -1,0 +1,21 @@
+name: GPU fork CPU fallback tests
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'src/compute/**'
+      - 'tests/gpu/**'
+      - '.github/workflows/gpu-cpu-tests.yml'
+jobs:
+  cpu-fallback:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build qt6-base-dev
+      - name: Configure CPU-only test host
+        run: cmake -S tests/gpu -B build-tests -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build-tests --parallel 2
+      - name: Test CPU fallback and exact CPU projection
+        run: ctest --test-dir build-tests --output-on-failure

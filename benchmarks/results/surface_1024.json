@@ -1,0 +1,10 @@
+{
+    "cpu_surface_ms": 1978.5332,
+    "gpu_surface_ms": 1442.7703,
+    "height": 1024,
+    "includes_full_surface_integration": true,
+    "maximum_height_abs_difference": 0,
+    "mean_height_abs_difference": 0,
+    "normals_synthetic": true,
+    "width": 1024
+}

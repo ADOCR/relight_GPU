@@ -1,0 +1,10 @@
+{
+  "coefficient_abs_max": 0.7664940000000229,
+  "coefficient_abs_mean": 0.0007992354316113852,
+  "encoded_jpg_abs_max": 3.0,
+  "encoded_jpg_abs_mean": 0.0034315321180555555,
+  "icc_equal_semantics": true,
+  "icc_equal_bytes": false,
+  "reconstruction_abs_max_0_255": 0.6814482317774946,
+  "reconstruction_abs_mean_0_255": 0.002502183257696402
+}

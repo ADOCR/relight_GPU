@@ -16,7 +16,7 @@ void parseLP(QString sphere_path, std::vector<Vector3f> &lights, std::vector<QSt
 	bool ok;
 	int n = stream.readLine().toInt(&ok);
 
-	if(!ok || n <= 0 || n > 1000)
+	if(!ok || n <= 0)
 		throw QString("Invalid format or number of lights in .lp.");
 
 	for(int i = 0; i < n; i++) {

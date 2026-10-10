@@ -13,6 +13,7 @@
 #include <QLineEdit>
 #include <QFileDialog>
 #include <QHBoxLayout>
+#include <QComboBox>
 
 Preferences::Preferences(QWidget *parent): QDialog(parent) {
 	setWindowTitle("Preferences - RelightLab");
@@ -69,7 +70,7 @@ QWidget *Preferences::buildPerformances() {
 	threads->setMaximum(64);
 	threads->setValue(n_threads == 0 ? 8 : n_threads);
 	threads->setEnabled(n_threads != 0);
-	layout->addWidget(threads, 1, 0);
+	layout->addWidget(threads, 1, 1);
 
 	connect(all_cores, &QCheckBox::toggled, [threads](bool on) {
 		qRelightApp->setThreads(on? 0 : threads->value());
@@ -79,7 +80,21 @@ QWidget *Preferences::buildPerformances() {
 	connect(threads, static_cast<void(QSpinBox::*)(int)>(&QSpinBox::valueChanged), [](int v) {
 		qRelightApp->setThreads(v); });
 
-	return widget;
+    auto *backend = new QComboBox;
+    backend->addItem("Automatic (GPU when beneficial)", "auto");
+    backend->addItem("CPU", "cpu");
+    backend->addItem("NVIDIA GPU (CPU fallback)", "cuda");
+    const int selection = backend->findData(QSettings().value("ComputeBackend", "auto"));
+    backend->setCurrentIndex(selection < 0 ? 0 : selection);
+    layout->addWidget(new QLabel("PTM/HSH processing:"), 2, 0);
+    layout->addWidget(backend, 2, 1);
+    auto *description = new QLabel("GPU processing uses all images at their original resolution. Unsupported modes use CPU.");
+    description->setWordWrap(true);
+    layout->addWidget(description, 3, 0, 1, 2);
+    connect(backend, &QComboBox::currentIndexChanged, [backend](int) {
+        QSettings().setValue("ComputeBackend", backend->currentData());
+    });
+    return widget;
 }
 
 QWidget *Preferences::buildAppearance() {

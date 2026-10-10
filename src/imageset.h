@@ -154,6 +154,7 @@ protected:
 
 
 private:
+    std::vector<uint8_t> rowBuffer; // reused by the sequential image reader
 	void compensateVignetting(PixelArray &pixels);
 
 	void compensateIntensity(PixelArray &pixels);

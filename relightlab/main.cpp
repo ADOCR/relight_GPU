@@ -36,7 +36,7 @@ int main(int argc, char *argv[]) {
 
 	QCoreApplication::setOrganizationName("VCG");
 	QCoreApplication::setOrganizationDomain("vcg.isti.cnr.it");
-	QCoreApplication::setApplicationName("RelightLab");
+	QCoreApplication::setApplicationName("RelightLab GPU");
 	QCoreApplication::setApplicationVersion(RELIGHT_STRINGIFY(RELIGHT_VERSION));
 
 	app.run();

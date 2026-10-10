@@ -1,6 +1,7 @@
 #include "fft_normal_integration.h"
 
 #include "pocketfft.h"
+#include "../compute/gpu_fft.h"
 #include <Eigen/Dense>
 
 #include <vector>
@@ -66,7 +67,8 @@ void fft2(const MatrixXd& input, ComplexMatrix& output) {
 	pocketfft::stride_t stride = { element_size, ptrdiff_t(cols)*element_size };
 	pocketfft::shape_t axes{0, 1};
 
-	pocketfft::c2c(shape, stride, stride, axes, pocketfft::FORWARD, data.data(), data.data(), 1.0);
+	if (!relight::tryGpuFft2D(data.data(),size_t(cols),size_t(rows),false,1.0))
+        pocketfft::c2c(shape, stride, stride, axes, pocketfft::FORWARD, data.data(), data.data(), 1.0);
 
 	// Fill output
 	output.resize(rows, cols);
@@ -93,7 +95,9 @@ void ifft2(const ComplexMatrix& input, MatrixXd& output) {
 	pocketfft::shape_t shape = {size_t(cols), size_t(rows)};
 	pocketfft::stride_t stride = { element_size, ptrdiff_t(cols)*element_size };
 	pocketfft::shape_t axes{0, 1};
-	pocketfft::c2c(shape, stride, stride, axes, pocketfft::BACKWARD, data.data(), data.data(), 1.0/(4*sqrt(2)* rows * cols));
+	const double normalization=1.0/(4*sqrt(2)*rows*cols);
+    if (!relight::tryGpuFft2D(data.data(),size_t(cols),size_t(rows),true,normalization))
+        pocketfft::c2c(shape, stride, stride, axes, pocketfft::BACKWARD, data.data(), data.data(), normalization);
 
 	// Fill output and normalize
 	output.resize(rows, cols);
